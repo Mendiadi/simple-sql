@@ -8,6 +8,14 @@ import enum
 
 
 
+class DatabaseNotExist(Exception):
+    def __init__(self, msg):
+        super().__init__("Database not exists. " + msg)
+
+class DatabaseExist(Exception):
+    def __init__(self, msg):
+        super().__init__("Cant create database that already exists. " + msg)
+
 
 class DBTable:
 
@@ -38,17 +46,29 @@ class SQLCommand(enum.Enum):
 
 class SQLExecutor:
     def __init__(self, *args, **kwargs):
+        name = kwargs.get("database", None)
+        if name:
+            kwargs["database"] = None
         self.db = mysql.connector.connect(*args, **kwargs)
         self._cursor = self.db.cursor()
         self._buffer = None
+        if name not in [dbs[0] for dbs in self.databases()]:
+            self.execute_create_db(name)
+            self.db.database = name
+        else:
+            self.db.database = name
 
     def __enter__(self):
         return SimpleSQL(self)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.db.commit()
+
         self._cursor.close()
         self.db.close()
+
+    def databases(self) -> list:
+        self._cursor.execute("show databases")
+        return self._cursor.fetchall()
 
     def _adding_quot(self, values):
         values_ = []
@@ -64,6 +84,9 @@ class SQLExecutor:
                 t[col] = cols[i]
             res.append(t)
         return res
+
+    def commit(self):
+        self.db.commit()
 
     def execute_select(self, table,
                        columns: Union[tuple[str], list[str], str] = "*",
@@ -90,24 +113,52 @@ class SQLExecutor:
         self._cursor.execute(f"{SQLCommand.insert.value} {SQLCommand.into.value} {table}"
                              f" {cols} VALUES {vals};")
 
-    def execute_create_table(self,name:str,columns:tuple,primary):
-        if not primary: primary = ""
-        self._cursor.execute(f"CREATE TABLE {name} ({str(',').join(columns)} PRIMARY KEY ({primary}) )")
+    def execute_create_table(self, name: str, columns: tuple, primary):
+        if not primary:
+            primary = ""
+        else:
+            primary = f", PRIMARY KEY ({primary}) "
+        print(f"CREATE TABLE {name} ({str(',').join(columns)}{primary});")
+        self._cursor.execute(f"CREATE TABLE {name} ({str(',').join(columns)}{primary});")
 
+    def stop(self):
+        self.__exit__(None, None, None)
 
-    def execute_delete_by(self,table,column,value):
+    def execute_delete_by(self, table, column, value):
         self._cursor.execute(f"DELETE FROM {table} WHERE {column} = \"{value}\";")
+
+    def execute_drop_table(self,table:str):
+        self._cursor.execute(f"DROP TABLE IF EXISTS {table}")
+
 
 class SimpleSQL:
     def __init__(self, executor: SQLExecutor = None):
         self._executor = executor
+
+    @property
+    def executor(self) -> SQLExecutor:
+        return self._executor
 
     @staticmethod
     def integer():
         return f"int"
 
     @staticmethod
-    def varchar(size:int):
+    def column(d_type,nullable:bool=True,auto_increment:bool=False):
+        if nullable:
+            nullable = ""
+        else: nullable = " NOT NULL"
+        if auto_increment:
+            auto_increment = " AUTO_INCREMENT"
+
+
+        else:  auto_increment = ""
+        print(f"{d_type}{nullable}{auto_increment}")
+        return f"{d_type}{nullable}{auto_increment}"
+
+
+    @staticmethod
+    def varchar(size: int,):
         return f"varchar({size})"
 
 
@@ -115,14 +166,24 @@ class SimpleSQL:
     def connect(*args, **kwargs) -> SQLExecutor:
         return SQLExecutor(*args, **kwargs)
 
+    def set_auto_commit(self,val:bool):
+        self._executor.db.autocommit = val
+
     def drop_database(self, name):
+        if name not in self.local_databases():
+            raise DatabaseNotExist(f"you cant drop none exists database named \"{name}\"")
         self._executor.execute_drop_db(name)
 
     def create_database(self, name):
-        self._executor.execute_create_db(name)
+        if name not in self.local_databases():
+            self._executor.execute_create_db(name)
+        else:
+            raise DatabaseExist(f"database named \"{name}\" is already created.")
 
-    def create_table(self,table:type,object,primary_key:str=None):
-        self._executor.execute_create_table(table.__name__,tuple([f"{obj} {type_}" for obj, type_ in object.__dict__.items()]),
+    def create_table(self, table: type, data, primary_key: str = None):
+
+        self._executor.execute_create_table(table.__name__ if not isinstance(table,str) else table,
+                                            tuple([f"{obj} {type_}" for obj, type_ in data.__dict__.items()]),
                                             primary_key)
 
     def query_filters(self, table: type, filters: str, first: bool = False):
@@ -137,8 +198,8 @@ class SimpleSQL:
         result = self._executor.execute_select(table.__name__)
         return [table(**item.__dict__) for item in result]
 
-    def insert_to(self, table: type, object):
-        self._executor.execute_insert(table.__name__, tuple(object.__dict__.keys()), tuple(object.__dict__.values()))
+    def insert_to(self, table: type, data):
+        self._executor.execute_insert(table.__name__, tuple(data.__dict__.keys()), tuple(data.__dict__.values()))
 
     def query_ordered(self, table: type, key: str, reverse: bool = False):
         if key:
@@ -146,5 +207,11 @@ class SimpleSQL:
         result = self._executor.execute_select(table.__name__, sorted=key)
         return [table(**item.__dict__) for item in result]
 
-    def query_delete_by(self,table:type,filter_by:tuple[str,Any]):
-        self._executor.execute_delete_by(table,filter_by[0],filter_by[1])
+    def query_delete_by(self, table: type, filter_by: tuple[str, Any]):
+        self._executor.execute_delete_by(table, filter_by[0], filter_by[1])
+
+    def drop_table(self,table:Union[str,type]):
+        self._executor.execute_drop_table(table.__name__ if not isinstance(table,str) else table)
+
+    def local_databases(self) -> list:
+        return [db[0] for db in self._executor.databases()]
