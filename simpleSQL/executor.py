@@ -46,6 +46,7 @@ class SQLExecutor:
         return SimpleSQL(self)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        self.db.commit()
         self._cursor.close()
         self.db.close()
 
@@ -89,9 +90,13 @@ class SQLExecutor:
         self._cursor.execute(f"{SQLCommand.insert.value} {SQLCommand.into.value} {table}"
                              f" {cols} VALUES {vals};")
 
-    def execute_create_table(self,name:str,columns:tuple):
-        self._cursor.execute(f"CREATE TABLE {name} ({str(',').join(columns)})")
+    def execute_create_table(self,name:str,columns:tuple,primary):
+        if not primary: primary = ""
+        self._cursor.execute(f"CREATE TABLE {name} ({str(',').join(columns)} PRIMARY KEY ({primary}) )")
 
+
+    def execute_delete_by(self,table,column,value):
+        self._cursor.execute(f"DELETE FROM {table} WHERE {column} = \"{value}\";")
 
 class SimpleSQL:
     def __init__(self, executor: SQLExecutor = None):
@@ -116,8 +121,9 @@ class SimpleSQL:
     def create_database(self, name):
         self._executor.execute_create_db(name)
 
-    def create_table(self,table:type,object):
-        self._executor.execute_create_table(table.__name__,tuple([f"{obj} {type_}" for obj, type_ in object.__dict__.items()]))
+    def create_table(self,table:type,object,primary_key:str=None):
+        self._executor.execute_create_table(table.__name__,tuple([f"{obj} {type_}" for obj, type_ in object.__dict__.items()]),
+                                            primary_key)
 
     def query_filters(self, table: type, filters: str, first: bool = False):
         result = self._executor.execute_select(table.__name__, condition=filters)
@@ -139,3 +145,6 @@ class SimpleSQL:
             key = f"{SQLCommand.order.value} {key}"
         result = self._executor.execute_select(table.__name__, sorted=key)
         return [table(**item.__dict__) for item in result]
+
+    def query_delete_by(self,table:type,filter_by:tuple[str,Any]):
+        self._executor.execute_delete_by(table,filter_by[0],filter_by[1])
