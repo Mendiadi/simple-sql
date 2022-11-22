@@ -6,6 +6,9 @@ import mysql.connector
 import enum
 
 
+
+
+
 class DBTable:
 
     def __getattribute__(self, item):
@@ -49,7 +52,7 @@ class SQLExecutor:
     def _adding_quot(self, values):
         values_ = []
         for val in values:
-            values_.append("\"" + val + "\"")
+            values_.append("\"" + str(val) + "\"")
         return values_
 
     def _packing_query(self):
@@ -76,9 +79,8 @@ class SQLExecutor:
         self._cursor.execute(f"CREATE DATABASE {name};")
         self.db.database = name
 
-    def execute_drop_db(self,name:str):
+    def execute_drop_db(self, name: str):
         self._cursor.execute(f"DROP DATABASE {name};")
-
 
     def execute_insert(self, table, columns: tuple, values: tuple):
         values = self._adding_quot(values)
@@ -87,20 +89,35 @@ class SQLExecutor:
         self._cursor.execute(f"{SQLCommand.insert.value} {SQLCommand.into.value} {table}"
                              f" {cols} VALUES {vals};")
 
+    def execute_create_table(self,name:str,columns:tuple):
+        self._cursor.execute(f"CREATE TABLE {name} ({str(',').join(columns)})")
+
 
 class SimpleSQL:
     def __init__(self, executor: SQLExecutor = None):
         self._executor = executor
 
     @staticmethod
+    def integer():
+        return f"int"
+
+    @staticmethod
+    def varchar(size:int):
+        return f"varchar({size})"
+
+
+    @staticmethod
     def connect(*args, **kwargs) -> SQLExecutor:
         return SQLExecutor(*args, **kwargs)
 
-    def drop_database(self,name):
+    def drop_database(self, name):
         self._executor.execute_drop_db(name)
 
     def create_database(self, name):
         self._executor.execute_create_db(name)
+
+    def create_table(self,table:type,object):
+        self._executor.execute_create_table(table.__name__,tuple([f"{obj} {type_}" for obj, type_ in object.__dict__.items()]))
 
     def query_filters(self, table: type, filters: str, first: bool = False):
         result = self._executor.execute_select(table.__name__, condition=filters)
