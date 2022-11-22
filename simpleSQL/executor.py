@@ -6,11 +6,10 @@ import mysql.connector
 import enum
 
 
-
-
 class DatabaseNotExist(Exception):
     def __init__(self, msg):
         super().__init__("Database not exists. " + msg)
+
 
 class DatabaseExist(Exception):
     def __init__(self, msg):
@@ -127,8 +126,11 @@ class SQLExecutor:
     def execute_delete_by(self, table, column, value):
         self._cursor.execute(f"DELETE FROM {table} WHERE {column} = \"{value}\";")
 
-    def execute_drop_table(self,table:str):
+    def execute_drop_table(self, table: str):
         self._cursor.execute(f"DROP TABLE IF EXISTS {table}")
+
+    def execute_increment_value(self, val: int):
+        self._cursor.execute(f"ALTER TABLE Persons AUTO_INCREMENT={val};")
 
 
 class SimpleSQL:
@@ -144,29 +146,29 @@ class SimpleSQL:
         return f"int"
 
     @staticmethod
-    def column(d_type,nullable:bool=True,auto_increment:bool=False):
+    def column(d_type, nullable: bool = True, auto_increment: bool = False):
         if nullable:
             nullable = ""
-        else: nullable = " NOT NULL"
+        else:
+            nullable = " NOT NULL"
         if auto_increment:
             auto_increment = " AUTO_INCREMENT"
 
 
-        else:  auto_increment = ""
+        else:
+            auto_increment = ""
         print(f"{d_type}{nullable}{auto_increment}")
         return f"{d_type}{nullable}{auto_increment}"
 
-
     @staticmethod
-    def varchar(size: int,):
+    def varchar(size: int, ):
         return f"varchar({size})"
-
 
     @staticmethod
     def connect(*args, **kwargs) -> SQLExecutor:
         return SQLExecutor(*args, **kwargs)
 
-    def set_auto_commit(self,val:bool):
+    def set_auto_commit(self, val: bool):
         self._executor.db.autocommit = val
 
     def drop_database(self, name):
@@ -180,11 +182,12 @@ class SimpleSQL:
         else:
             raise DatabaseExist(f"database named \"{name}\" is already created.")
 
-    def create_table(self, table: type, data, primary_key: str = None):
-
-        self._executor.execute_create_table(table.__name__ if not isinstance(table,str) else table,
+    def create_table(self, table: type, data, primary_key: str = None, auto_increment_value: int = None):
+        self._executor.execute_create_table(table.__name__ if not isinstance(table, str) else table,
                                             tuple([f"{obj} {type_}" for obj, type_ in data.__dict__.items()]),
                                             primary_key)
+        if auto_increment_value:
+            self._executor.execute_increment_value(auto_increment_value)
 
     def query_filters(self, table: type, filters: str, first: bool = False):
         result = self._executor.execute_select(table.__name__, condition=filters)
@@ -210,8 +213,8 @@ class SimpleSQL:
     def query_delete_by(self, table: type, filter_by: tuple[str, Any]):
         self._executor.execute_delete_by(table, filter_by[0], filter_by[1])
 
-    def drop_table(self,table:Union[str,type]):
-        self._executor.execute_drop_table(table.__name__ if not isinstance(table,str) else table)
+    def drop_table(self, table: Union[str, type]):
+        self._executor.execute_drop_table(table.__name__ if not isinstance(table, str) else table)
 
     def local_databases(self) -> list:
         return [db[0] for db in self._executor.databases()]
