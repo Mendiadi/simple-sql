@@ -66,7 +66,7 @@ class SQLExecutor:
         self.db.close()
 
     def databases(self) -> list:
-        self._cursor.execute("show databases")
+        self.execute("show databases")
         return self._cursor.fetchall()
 
     def _adding_quot(self, values):
@@ -95,21 +95,21 @@ class SQLExecutor:
         if columns != "*": columns = ", ".join(columns)[1:]
         if condition: condition = f"{SQLCommand.where.value} {condition}"
         if not sorted: sorted = ""
-        self._cursor.execute(f"{SQLCommand.select.value} {columns} FROM {table} {sorted} {condition};")
+        self.execute(f"{SQLCommand.select.value} {columns} FROM {table} {sorted} {condition};")
         return self._packing_query()
 
     def execute_create_db(self, name: str):
-        self._cursor.execute(f"CREATE DATABASE {name};")
+        self.execute(f"CREATE DATABASE {name};")
         self.db.database = name
 
     def execute_drop_db(self, name: str):
-        self._cursor.execute(f"DROP DATABASE {name};")
+        self.execute(f"DROP DATABASE {name};")
 
     def execute_insert(self, table, columns: tuple, values: tuple):
         values = self._adding_quot(values)
         cols = f'({str(",").join(columns)})'
         vals = f'({str(",").join(values)})'
-        self._cursor.execute(f"{SQLCommand.insert.value} {SQLCommand.into.value} {table}"
+        self.execute(f"{SQLCommand.insert.value} {SQLCommand.into.value} {table}"
                              f" {cols} VALUES {vals};")
 
     def execute_create_table(self, name: str, columns: tuple, primary):
@@ -117,20 +117,36 @@ class SQLExecutor:
             primary = ""
         else:
             primary = f", PRIMARY KEY ({primary}) "
-        print(f"CREATE TABLE {name} ({str(',').join(columns)}{primary});")
-        self._cursor.execute(f"CREATE TABLE {name} ({str(',').join(columns)}{primary});")
+
+        self.execute(f"CREATE TABLE {name} ({str(',').join(columns)}{primary});")
 
     def stop(self):
         self.__exit__(None, None, None)
 
     def execute_delete_by(self, table, column, value):
-        self._cursor.execute(f"DELETE FROM {table} WHERE {column} = \"{value}\";")
+        self.execute(f"DELETE FROM {table} WHERE {column} = \"{value}\";")
+
+
+    def execute_delete_if_equal(self,table,statement):
+        self.execute(f"DELETE FROM {table} WHERE {statement};")
+
 
     def execute_drop_table(self, table: str):
-        self._cursor.execute(f"DROP TABLE IF EXISTS {table}")
+        self.execute(f"DROP TABLE IF EXISTS {table}")
 
     def execute_increment_value(self, val: int):
-        self._cursor.execute(f"ALTER TABLE Persons AUTO_INCREMENT={val};")
+        self.execute(f"ALTER TABLE Persons AUTO_INCREMENT={val};")
+
+
+    def execute_backup(self,database:str,filepath:str,diff:bool=False):
+        if diff: diff_ = " WITH DIFFERENTIAL"
+        else: diff_ = ""
+        self.execute(f"BACKUP DATABASE {database} TO DISK = '{filepath}'{diff_};")
+
+
+
+    def execute(self,statement):
+        self._cursor.execute(statement)
 
 
 class SimpleSQL:
@@ -211,10 +227,53 @@ class SimpleSQL:
         return [table(**item.__dict__) for item in result]
 
     def query_delete_by(self, table: type, filter_by: tuple[str, Any]):
-        self._executor.execute_delete_by(table, filter_by[0], filter_by[1])
+        self._executor.execute_delete_by(table.__name__, filter_by[0], filter_by[1])
 
     def drop_table(self, table: Union[str, type]):
         self._executor.execute_drop_table(table.__name__ if not isinstance(table, str) else table)
 
     def local_databases(self) -> list:
         return [db[0] for db in self._executor.databases()]
+
+    def query_update_table(self):...
+
+    def query_alter_table(self):...
+
+    def backup(self,filepath:str,diff:bool=False):
+        if self._executor.db.database:
+            self._executor.execute_backup(self._executor.db.database,filepath,diff)
+        else: raise DatabaseNotExist(f"connected with {self._executor.db.database} database."
+                                     f"consider to connect or created database to backup, or just use executor.execute_backup()")
+
+    def add(self,instance:Any):
+        try:
+            self.insert_to(type(instance),instance)
+
+        except mysql.connector.errors.ProgrammingError as e:
+            if e.errno != 1146:
+                raise e
+            temp = type(instance)(**instance.__dict__)
+            self.create_table(*self._prapare_table(instance))
+            self.insert_to(type(temp),temp)
+
+
+    def delete(self,instance:Any):
+        r = ""
+        for k, v in instance.__dict__.items():
+            r += f" {k} = \"{v}\" AND"
+        self._executor.execute_delete_if_equal(type(instance).__name__,r[:-3:])
+
+
+
+    def _prapare_table(self,instance):
+        table_name = type(instance).__name__
+        temp = {}
+        for attribute, value in instance.__dict__.items():
+            if isinstance(value,int):
+                temp[attribute] = self.integer()
+            elif isinstance(value,str):
+                temp[attribute] = self.varchar(50)
+            else:
+                temp[attribute] = None
+        instance.__dict__ = temp
+        return table_name,instance,None,None
