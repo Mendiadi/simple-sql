@@ -1,1 +1,1 @@
-from .executor import SimpleSQL
+from .executor import connect

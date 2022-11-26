@@ -69,7 +69,7 @@ class SQLExecutor:
             self.db.database = name
 
     def _connection(self, *args, **kwargs):
-        kwargs.pop("create_and_ignore")
+        kwargs.pop("create_and_ignore",None)
         self.db = mysql.connector.connect(*args, **kwargs)
         self._cursor = self.db.cursor()
 
@@ -125,12 +125,15 @@ class SQLExecutor:
         self.execute(f"{SQLCommand.insert.value} {SQLCommand.into.value} {table}"
                      f" {cols} VALUES {vals};")
 
+    def start(self):
+        return self.__enter__()
+
     def execute_create_table(self, name: str, columns: tuple, primary):
         if not primary:
             primary = ""
         else:
             primary = f", PRIMARY KEY ({primary}) "
-
+        print(f"CREATE TABLE {name} ({str(',').join(columns)}{primary});")
         self.execute(f"CREATE TABLE {name} ({str(',').join(columns)}{primary});")
 
     def stop(self):
@@ -155,21 +158,31 @@ class SQLExecutor:
             diff_ = ""
         self.execute(f"BACKUP DATABASE {database} TO DISK = '{filepath}'{diff_};")
 
+    def execute_update_table(self, table, data, condition=None, filters: list[tuple] = None):
+        if filters:
+            filters_parse = [f"{c} = \'{v}\'" for c, v in filters if data.__dict__[c] != v]
+        else:
+            filters_parse = [f"{c} = \'{v}\'" for c, v in data.__dict__.items()]
+
+        if condition:
+            condition = f" WHERE {condition}"
+        else:
+            condition = f" WHERE {filters_parse.pop(0)}"
+
+        self.execute(f"UPDATE {table} SET {','.join(filters_parse)}{condition};")
+
     def execute(self, statement):
         self._cursor.execute(statement)
 
 
-class SimpleSQL:
-    def __init__(self, executor: SQLExecutor = None):
-        self._executor = executor
-
-    @property
-    def executor(self) -> SQLExecutor:
-        return self._executor
-
+class SQLTypes:
     @staticmethod
     def integer():
         return f"int"
+
+    @staticmethod
+    def varchar(size: int, ):
+        return f"varchar({size})"
 
     @staticmethod
     def column(d_type, nullable: bool = True, auto_increment: bool = False):
@@ -180,19 +193,24 @@ class SimpleSQL:
         if auto_increment:
             auto_increment = " AUTO_INCREMENT"
 
-
         else:
             auto_increment = ""
         print(f"{d_type}{nullable}{auto_increment}")
         return f"{d_type}{nullable}{auto_increment}"
 
-    @staticmethod
-    def varchar(size: int, ):
-        return f"varchar({size})"
 
-    @staticmethod
-    def connect(*args, **kwargs) -> SQLExecutor:
-        return SQLExecutor(*args, **kwargs)
+class SimpleSQL:
+    def __init__(self, executor: SQLExecutor = None):
+        self._executor = executor
+        self._types = SQLTypes()
+
+    @property
+    def executor(self) -> SQLExecutor:
+        return self._executor
+
+    @property
+    def types(self) -> SQLTypes:
+        return self._types
 
     def set_auto_commit(self, val: bool):
         self._executor.db.autocommit = val
@@ -213,6 +231,7 @@ class SimpleSQL:
                                             tuple([f"{obj} {type_}" for obj, type_ in data.__dict__.items()]),
                                             primary_key)
         if auto_increment_value:
+            print(auto_increment_value)
             self._executor.execute_increment_value(auto_increment_value)
 
     def query_filters(self, table: type, filters: str, first: bool = False):
@@ -245,8 +264,8 @@ class SimpleSQL:
     def local_databases(self) -> list:
         return [db[0] for db in self._executor.databases()]
 
-    def query_update_table(self):
-        ...
+    def query_update_table(self, table, data):
+        self._executor.execute_update_table(table.__name__,data)
 
     def query_alter_table(self):
         ...
@@ -260,13 +279,20 @@ class SimpleSQL:
 
     def add(self, instance: Any):
         try:
+            temp = 0
+            for a,v in instance.__dict__.items():
+                if v == "primary_key":
+                    instance.__dict__[a] = 0
+                    temp = a
             self.insert_to(type(instance), instance)
 
         except mysql.connector.errors.ProgrammingError as e:
             if e.errno != 1146:
                 raise e
+            instance.__dict__[temp] = "primary_key"
             temp = type(instance)(**instance.__dict__)
-            self.create_table(*self._prapare_table(instance))
+            print(temp)
+            self.create_table(*self._prepare_table(instance))
             self.insert_to(type(temp), temp)
 
     def delete(self, instance: Any):
@@ -275,15 +301,23 @@ class SimpleSQL:
             r += f" {k} = \"{v}\" AND"
         self._executor.execute_delete_if_equal(type(instance).__name__, r[:-3:])
 
-    def _prapare_table(self, instance):
+    def _prepare_table(self, instance):
         table_name = type(instance).__name__
         temp = {}
+        primary = inc = None
         for attribute, value in instance.__dict__.items():
+            if value == "primary_key":
+                primary,inc = attribute, 1
             if isinstance(value, int):
-                temp[attribute] = self.integer()
+                temp[attribute] = self._types.column(self._types.integer(),auto_increment=True)
             elif isinstance(value, str):
-                temp[attribute] = self.varchar(50)
+                temp[attribute] = self._types.column(self._types.varchar(50))
             else:
                 temp[attribute] = None
+            print(attribute,value)
         instance.__dict__ = temp
-        return table_name, instance, None, None
+        return table_name, instance, primary, inc
+
+
+def connect(*args, **kwargs) -> SQLExecutor:
+    return SQLExecutor(*args, **kwargs)
