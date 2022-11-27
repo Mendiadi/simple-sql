@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from ctypes import Union
-from typing import Callable, Any, Sequence
+from typing import Any, Sequence, Iterable
 
 import mysql.connector
 import sqlite3
@@ -56,7 +56,8 @@ class SQLExecutor:
     def __enter__(self):
         return SimpleSQL(self)
 
-    def _adding_quot(self, values, columns):
+    @staticmethod
+    def _adding_quot(values, columns):
         values_ = []
         columns_ = list(columns)
         for i, val in enumerate(values):
@@ -75,14 +76,17 @@ class SQLExecutor:
         ...
 
     def execute_select(self, table,
-                       columns: Union[tuple[str], list[str], str] = "*",
-                       sorted: str = None,
+                       columns: [Iterable[str], str] = "*",
+                       sorted_: str = None,
                        distinct: bool = False,
                        condition: str = ""):
-        if columns != "*": columns = ", ".join(columns)[1:]
-        if condition: condition = f"{SQLCommand.where.value} {condition}"
-        if not sorted: sorted = ""
-        self.execute(f"{SQLCommand.select.value} {columns} FROM {table} {sorted} {condition};")
+        if columns != "*":
+            columns = ", ".join(columns)[1:]
+        if condition:
+            condition = f"{SQLCommand.where.value} {condition}"
+        if not sorted_:
+            sorted_ = ""
+        self.execute(f"{SQLCommand.select.value} {columns} FROM {table} {sorted_} {condition};")
 
         return self._packing_query()
 
@@ -243,24 +247,30 @@ class SQLTypes:
     def __init__(self, serverless=False):
         self._server_less = serverless
 
-    def text(self, size: int = 0, long: bool = False):
+    @staticmethod
+    def text(size: int = 0, long: bool = False):
         if long:
             return f"LONGTEXT"
         return f"TEXT({size})"
 
-    def boolean(self):
+    @staticmethod
+    def boolean():
         return "BOOL"
 
-    def double(self, size: int, d: int):
+    @staticmethod
+    def double(size: int, d: int):
         return f"DOUBLE({size}, {d})"
 
-    def char(self, size: int):
+    @staticmethod
+    def char(size: int):
         return f"CHAR({size})"
 
-    def integer(self):
+    @staticmethod
+    def integer():
         return f"INTEGER"
 
-    def varchar(self, size: int, ):
+    @staticmethod
+    def varchar(size: int, ):
         return f"VARCHAR({size})"
 
     def column(self, d_type, nullable: bool = True, auto_increment: bool = False):
@@ -328,8 +338,8 @@ class SimpleSQL:
         result = self._executor.execute_select(table.__name__, condition=filters)
         return [table(**item.__dict__) for item in result] if not first else table(**result[0].__dict__)
 
-    def query_filter_by(self, table: type, filter: str, filter_value: Any, first=False):
-        result = self._executor.execute_select(table.__name__, condition=f"{filter} = \"{filter_value}\"")
+    def query_filter_by(self, table: type, filter_: str, filter_value: Any, first=False):
+        result = self._executor.execute_select(table.__name__, condition=f"{filter_} = \"{filter_value}\"")
         return [table(**item.__dict__) for item in result] if not first else table(**result[0].__dict__)
 
     def query_all(self, table: type):
@@ -342,7 +352,7 @@ class SimpleSQL:
     def query_ordered(self, table: type, key: str, reverse: bool = False):
         if key:
             key = f"{SQLCommand.order.value} {key}"
-        result = self._executor.execute_select(table.__name__, sorted=key)
+        result = self._executor.execute_select(table.__name__, sorted_=key)
         return [table(**item.__dict__) for item in result]
 
     def query_delete_by(self, table: type, filter_by: tuple[str, Any]):
@@ -365,21 +375,13 @@ class SimpleSQL:
             self._executor.execute_backup(self._executor.db.database, filepath, diff)
         else:
             raise DatabaseNotExist(f"connected with {self._executor.db.database} database."
-                                   f"consider to connect or created database to backup, or just use executor.execute_backup()")
+                                   f"consider to connect or created database to backup,"
+                                   f" or just use executor.execute_backup()")
 
-    # def add(self, instance: Any):
-    #     try:
-    #
-    #         temp_p = instance.__dict__.get("primary_key",None)
-    #         if temp_p: instance.__dict__.pop("primary_key")
-    #         self.insert_to(type(instance), instance)
-    #     except mysql.connector.errors.ProgrammingError as e:
-    #         if e.errno != 1146:
-    #             raise e
-    #         if temp_p: instance.__dict__["primary_key"] = temp_p
-    #         temp = type(instance)(**instance.__dict__)
-    #         self.create_table(*self._prepare_table(instance))
-    #         self.insert_to(type(temp), temp)
+    def add(self, instance: Any):
+        temp = instance.__dict__
+        self.create_table(*self._prepare_table(instance))
+        self.insert_to(type(instance), type(instance)(**temp))
 
     def delete(self, instance: Any):
         r = ""
@@ -390,31 +392,28 @@ class SimpleSQL:
     def _prepare_table(self, instance):
         table_name = type(instance).__name__
         temp = {}
-        inc = None
-        primary = instance.__dict__.get("primary_key", None)
-        if primary:
-            inc = primary[1]
-            primary = primary[0]
+        primary = None
+
         for attribute, value in instance.__dict__.items():
-            if attribute == "primary_key": continue
-            if attribute == primary and inc:
-                auto_inc = True
-            else:
-                auto_inc = False
+            if value == self.AUTO_INC:
+                primary = attribute
+                temp[attribute] = self._types.column(self.types.integer(),auto_increment=True)
+                continue
             if isinstance(value, int):
-                temp[attribute] = self._types.column(self._types.integer(), auto_increment=auto_inc)
+                temp[attribute] = self._types.column(self._types.integer(), )
             elif isinstance(value, str):
-                temp[attribute] = self._types.column(self._types.varchar(50), auto_increment=auto_inc)
+                temp[attribute] = self._types.column(self._types.varchar(50), )
             else:
                 temp[attribute] = None
             print(attribute, value)
         instance.__dict__ = temp
-        return table_name, instance, primary, inc
+        return table_name, instance, primary
 
 
 def connect(serverless=False, create_and_ignore=False, *args, **kwargs) -> SQLExecutor:
     if serverless:
         return SQLServerLess(*args, **kwargs)
     if create_and_ignore:
-        return SQLServer(create_and_ignore, *args, **kwargs)
+        kwargs["create_and_ignore"]=create_and_ignore
+        return SQLServer(*args, **kwargs)
     return SQLServer(*args, **kwargs)
