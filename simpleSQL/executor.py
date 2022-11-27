@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from ctypes import Union
 from typing import Any, Sequence, Iterable
@@ -61,6 +62,10 @@ class SQLExecutor:
         values_ = []
         columns_ = list(columns)
         for i, val in enumerate(values):
+            if list.__name__ == type(val).__name__:
+                val = json.dumps({"list": val})
+            if dict.__name__ == type(val).__name__:
+                val = json.dumps({"dict": val})
             if val is None:
                 values_.append("null")
             elif val == "AUTO_INC_VALUE":
@@ -68,7 +73,7 @@ class SQLExecutor:
                 continue
 
             else:
-                values_.append("\"" + str(val) + "\"")
+                values_.append("\'" + str(val) + "\'")
 
         return columns_, values_
 
@@ -177,9 +182,20 @@ class SQLServerLess(SQLExecutor):
         res = []
         for cols in self._cursor.fetchall():
             t = DBTable()
+
             for i, col in enumerate(names):
-                t[col] = cols[i]
+                if type(cols[i]).__name__ == str.__name__:
+                    if '{"list": ' in cols[i]:
+                        t[col] = json.loads(cols[i])['list']
+                    elif '{"dict": ' in cols[i]:
+                        t[col] = json.loads(cols[i])['dict']
+                    else:
+                        t[col] = cols[i]
+                else:
+                    t[col] = cols[i]
+
             res.append(t)
+
         return res
 
     def execute_increment_value(self, val: int):
@@ -233,7 +249,16 @@ class SQLServer(SQLExecutor):
         for cols in self._cursor:
             t = DBTable()
             for i, col in enumerate(self._cursor.column_names):
-                t[col] = cols[i]
+
+                if type(cols[i]).__name__ == str.__name__:
+                    if '{"list": ' in cols[i]:
+                        t[col] = json.loads(cols[i])['list']
+                    elif '{"dict": ' in cols[i]:
+                        t[col] = json.loads(cols[i])['dict']
+                    else:
+                        t[col] = cols[i]
+                else:
+                    t[col] = cols[i]
             res.append(t)
         return res
 
@@ -264,6 +289,12 @@ class SQLTypes:
     @staticmethod
     def char(size: int):
         return f"CHAR({size})"
+
+    @staticmethod
+    def objType(max_size: int = None):
+        if max_size:
+            return SQLTypes.text(max_size)
+        return SQLTypes.text(long=True)
 
     @staticmethod
     def integer():
@@ -347,6 +378,7 @@ class SimpleSQL:
 
     def query_all(self, table: type):
         result = self._executor.execute_select(table.__name__)
+        print(result)
         return [table(**item.__dict__) for item in result]
 
     def insert_to(self, table: type, data):
@@ -400,10 +432,15 @@ class SimpleSQL:
         for attribute, value in instance.__dict__.items():
             if value == self.AUTO_INC:
                 primary = attribute
-                temp[attribute] = self._types.column(self.types.integer(),auto_increment=True)
+                temp[attribute] = self._types.column(self.types.integer(), auto_increment=True)
                 continue
+
             if isinstance(value, int):
+
                 temp[attribute] = self._types.column(self._types.integer(), )
+
+            elif isinstance(value,(list,tuple,dict)):
+                temp[attribute] = self._types.column(self._types.objType(), )
             elif isinstance(value, str):
                 temp[attribute] = self._types.column(self._types.varchar(50), )
             else:
@@ -417,6 +454,6 @@ def connect(serverless=False, create_and_ignore=False, *args, **kwargs) -> SQLEx
     if serverless:
         return SQLServerLess(*args, **kwargs)
     if create_and_ignore:
-        kwargs["create_and_ignore"]=create_and_ignore
+        kwargs["create_and_ignore"] = create_and_ignore
         return SQLServer(*args, **kwargs)
     return SQLServer(*args, **kwargs)
