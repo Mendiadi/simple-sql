@@ -1,8 +1,9 @@
 from __future__ import annotations
 from ctypes import Union
-from typing import Callable, Any
+from typing import Callable, Any, Sequence
 
 import mysql.connector
+import sqlite3
 import enum
 
 
@@ -48,57 +49,27 @@ class SQLExecutor:
         self.db = None
         self._cursor = None
         self._buffer = None
-        if kwargs.get("create_and_ignore", None):
-
-            self._auto_create_and_ignore(*args, **kwargs)
-        else:
-            self._connection(*args, **kwargs)
 
     def __enter__(self):
         return SimpleSQL(self)
 
-    def _auto_create_and_ignore(self, *args, **kwargs):
-        name = kwargs.get("database", None)
-        if name:
-            kwargs["database"] = None
-        self._connection(*args, **kwargs)
-        if name not in [dbs[0] for dbs in self.databases()]:
-            self.execute_create_db(name)
-            self.db.database = name
-        else:
-            self.db.database = name
-
-    def _connection(self, *args, **kwargs):
-        kwargs.pop("create_and_ignore",None)
-        self.db = mysql.connector.connect(*args, **kwargs)
-        self._cursor = self.db.cursor()
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-
-        self._cursor.close()
-        self.db.close()
-
-    def databases(self) -> list:
-        self.execute("show databases")
-        return self._cursor.fetchall()
-
-    def _adding_quot(self, values):
+    def _adding_quot(self, values,columns):
         values_ = []
-        for val in values:
-            values_.append("\"" + str(val) + "\"")
-        return values_
+        columns_ = list(columns)
+        for i,val in enumerate(values):
+            if val is None:
+                values_.append("null")
+            elif val == "AUTO_INC_VALUE":
+                columns_.pop(i)
+                continue
 
-    def _packing_query(self):
-        res = []
-        for cols in self._cursor:
-            t = DBTable()
-            for i, col in enumerate(self._cursor.column_names):
-                t[col] = cols[i]
-            res.append(t)
-        return res
+            else:
+                values_.append("\"" + str(val) + "\"")
 
-    def commit(self):
-        self.db.commit()
+        return columns_, values_
+
+    def _packing_query(self) -> Sequence:
+        ...
 
     def execute_select(self, table,
                        columns: Union[tuple[str], list[str], str] = "*",
@@ -109,6 +80,7 @@ class SQLExecutor:
         if condition: condition = f"{SQLCommand.where.value} {condition}"
         if not sorted: sorted = ""
         self.execute(f"{SQLCommand.select.value} {columns} FROM {table} {sorted} {condition};")
+
         return self._packing_query()
 
     def execute_create_db(self, name: str):
@@ -119,11 +91,17 @@ class SQLExecutor:
         self.execute(f"DROP DATABASE {name};")
 
     def execute_insert(self, table, columns: tuple, values: tuple):
-        values = self._adding_quot(values)
+        columns, values = self._adding_quot(values,columns)
         cols = f'({str(",").join(columns)})'
         vals = f'({str(",").join(values)})'
-        self.execute(f"{SQLCommand.insert.value} {SQLCommand.into.value} {table}"
+        print(f"{SQLCommand.insert.value} {SQLCommand.into.value} {table}"
                      f" {cols} VALUES {vals};")
+        self._cursor.execute(f"{SQLCommand.insert.value} {SQLCommand.into.value} {table}"
+                     f" {cols} VALUES {vals};")
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._cursor.close()
+        self.db.close()
 
     def start(self):
         return self.__enter__()
@@ -134,7 +112,7 @@ class SQLExecutor:
         else:
             primary = f", PRIMARY KEY ({primary}) "
         print(f"CREATE TABLE {name} ({str(',').join(columns)}{primary});")
-        self.execute(f"CREATE TABLE {name} ({str(',').join(columns)}{primary});")
+        self.execute(f"CREATE TABLE IF NOT EXISTS {name} ({str(',').join(columns)}{primary});")
 
     def stop(self):
         self.__exit__(None, None, None)
@@ -149,7 +127,7 @@ class SQLExecutor:
         self.execute(f"DROP TABLE IF EXISTS {table}")
 
     def execute_increment_value(self, val: int):
-        self.execute(f"ALTER TABLE Persons AUTO_INCREMENT={val};")
+        ...
 
     def execute_backup(self, database: str, filepath: str, diff: bool = False):
         if diff:
@@ -175,23 +153,90 @@ class SQLExecutor:
         self._cursor.execute(statement)
 
 
+class SQLServerLess(SQLExecutor):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.db = sqlite3.connect(*args, **kwargs)
+        self._cursor = self.db.cursor()
+
+    def _packing_query(self):
+        names = list(map(lambda x: x[0], self._cursor.description))
+        res = []
+        for cols in self._cursor.fetchall():
+            t = DBTable()
+            for i, col in enumerate(names):
+
+                t[col] = cols[i]
+            res.append(t)
+        return res
+
+
+    def execute_increment_value(self, val: int):
+        self.execute(f"ALTER TABLE Persons AUTOINCREMENT={val};")
+
+
+class SQLServer(SQLExecutor):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if kwargs.get("create_and_ignore", None):
+            self._auto_create_and_ignore(*args, **kwargs)
+        else:
+            self._create(*args, **kwargs)
+
+    def execute_increment_value(self, val: int):
+        self.execute(f"ALTER TABLE Persons AUTO_INCREMENT={val};")
+
+    def _auto_create_and_ignore(self, *args, **kwargs):
+        name = kwargs.get("database", None)
+        if name:
+            kwargs["database"] = None
+        self._create(*args, **kwargs)
+        if name not in [dbs[0] for dbs in self.databases()]:
+            self.execute_create_db(name)
+            self.db.database = name
+        else:
+            self.db.database = name
+
+    def _create(self, *args, **kwargs):
+        kwargs.pop("create_and_ignore", None)
+        self.db = mysql.connector.connect(*args, **kwargs)
+        self._cursor = self.db.cursor()
+
+    def _packing_query(self):
+        res = []
+        for cols in self._cursor:
+            t = DBTable()
+            for i, col in enumerate(self._cursor.column_names):
+                t[col] = cols[i]
+            res.append(t)
+        return res
+
+    def databases(self) -> list:
+        self.execute("show databases")
+        return self._cursor.fetchall()
+
+
 class SQLTypes:
-    @staticmethod
-    def integer():
-        return f"int"
 
-    @staticmethod
-    def varchar(size: int, ):
-        return f"varchar({size})"
+    def __init__(self, serverless=False):
+        self._server_less = serverless
 
-    @staticmethod
-    def column(d_type, nullable: bool = True, auto_increment: bool = False):
+    def integer(self):
+        return f"INTEGER"
+
+    def varchar(self, size: int, ):
+        return f"VARCHAR({size})"
+
+    def column(self, d_type, nullable: bool = True, auto_increment: bool = False):
         if nullable:
             nullable = ""
         else:
             nullable = " NOT NULL"
         if auto_increment:
-            auto_increment = " AUTO_INCREMENT"
+            if self._server_less:
+                auto_increment = ""
+            else:
+                auto_increment = " AUTO_INCREMENT"
 
         else:
             auto_increment = ""
@@ -200,9 +245,17 @@ class SQLTypes:
 
 
 class SimpleSQL:
+
+    AUTO_INC = "AUTO_INC_VALUE"
+
     def __init__(self, executor: SQLExecutor = None):
         self._executor = executor
-        self._types = SQLTypes()
+        if isinstance(executor,SQLServer):
+            self._types = SQLTypes()
+        else:
+            self._types = SQLTypes(True)
+
+
 
     @property
     def executor(self) -> SQLExecutor:
@@ -211,6 +264,9 @@ class SimpleSQL:
     @property
     def types(self) -> SQLTypes:
         return self._types
+
+    def commit(self):
+        self._executor.db.commit()
 
     def set_auto_commit(self, val: bool):
         self._executor.db.autocommit = val
@@ -230,8 +286,8 @@ class SimpleSQL:
         self._executor.execute_create_table(table.__name__ if not isinstance(table, str) else table,
                                             tuple([f"{obj} {type_}" for obj, type_ in data.__dict__.items()]),
                                             primary_key)
-        if auto_increment_value:
-            print(auto_increment_value)
+        if auto_increment_value and not self._types._server_less:
+
             self._executor.execute_increment_value(auto_increment_value)
 
     def query_filters(self, table: type, filters: str, first: bool = False):
@@ -265,7 +321,7 @@ class SimpleSQL:
         return [db[0] for db in self._executor.databases()]
 
     def query_update_table(self, table, data):
-        self._executor.execute_update_table(table.__name__,data)
+        self._executor.execute_update_table(table.__name__, data)
 
     def query_alter_table(self):
         ...
@@ -277,23 +333,19 @@ class SimpleSQL:
             raise DatabaseNotExist(f"connected with {self._executor.db.database} database."
                                    f"consider to connect or created database to backup, or just use executor.execute_backup()")
 
-    def add(self, instance: Any):
-        try:
-            temp = 0
-            for a,v in instance.__dict__.items():
-                if v == "primary_key":
-                    instance.__dict__[a] = 0
-                    temp = a
-            self.insert_to(type(instance), instance)
-
-        except mysql.connector.errors.ProgrammingError as e:
-            if e.errno != 1146:
-                raise e
-            instance.__dict__[temp] = "primary_key"
-            temp = type(instance)(**instance.__dict__)
-            print(temp)
-            self.create_table(*self._prepare_table(instance))
-            self.insert_to(type(temp), temp)
+    # def add(self, instance: Any):
+    #     try:
+    #
+    #         temp_p = instance.__dict__.get("primary_key",None)
+    #         if temp_p: instance.__dict__.pop("primary_key")
+    #         self.insert_to(type(instance), instance)
+    #     except mysql.connector.errors.ProgrammingError as e:
+    #         if e.errno != 1146:
+    #             raise e
+    #         if temp_p: instance.__dict__["primary_key"] = temp_p
+    #         temp = type(instance)(**instance.__dict__)
+    #         self.create_table(*self._prepare_table(instance))
+    #         self.insert_to(type(temp), temp)
 
     def delete(self, instance: Any):
         r = ""
@@ -304,20 +356,31 @@ class SimpleSQL:
     def _prepare_table(self, instance):
         table_name = type(instance).__name__
         temp = {}
-        primary = inc = None
+        inc = None
+        primary = instance.__dict__.get("primary_key", None)
+        if primary:
+            inc = primary[1]
+            primary = primary[0]
         for attribute, value in instance.__dict__.items():
-            if value == "primary_key":
-                primary,inc = attribute, 1
+            if attribute == "primary_key": continue
+            if attribute == primary and inc:
+                auto_inc = True
+            else:
+                auto_inc = False
             if isinstance(value, int):
-                temp[attribute] = self._types.column(self._types.integer(),auto_increment=True)
+                temp[attribute] = self._types.column(self._types.integer(), auto_increment=auto_inc)
             elif isinstance(value, str):
-                temp[attribute] = self._types.column(self._types.varchar(50))
+                temp[attribute] = self._types.column(self._types.varchar(50), auto_increment=auto_inc)
             else:
                 temp[attribute] = None
-            print(attribute,value)
+            print(attribute, value)
         instance.__dict__ = temp
         return table_name, instance, primary, inc
 
 
-def connect(*args, **kwargs) -> SQLExecutor:
-    return SQLExecutor(*args, **kwargs)
+def connect(serverless=False, create_and_ignore=False, *args, **kwargs) -> SQLExecutor:
+    if serverless:
+        return SQLServerLess(*args, **kwargs)
+    if create_and_ignore:
+        return SQLServer(create_and_ignore, *args, **kwargs)
+    return SQLServer(*args, **kwargs)
