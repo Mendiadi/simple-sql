@@ -106,8 +106,7 @@ class SQLExecutor:
         columns, values = self._adding_quot(values, columns)
         cols = f'({str(",").join(columns)})'
         vals = f'({str(",").join(values)})'
-        print(f"{SQLCommand.insert.value} {SQLCommand.into.value} {table}"
-              f" {cols} VALUES {vals};")
+
         self._cursor.execute(f"{SQLCommand.insert.value} {SQLCommand.into.value} {table}"
                              f" {cols} VALUES {vals};")
 
@@ -125,7 +124,7 @@ class SQLExecutor:
             primary = ""
         else:
             primary = f", PRIMARY KEY ({primary}) "
-        print(f"CREATE TABLE {name} ({str(',').join(columns)}{primary});")
+
         self.execute(f"CREATE TABLE IF NOT EXISTS {name} ({str(',').join(columns)}{primary});")
 
     def stop(self):
@@ -151,10 +150,20 @@ class SQLExecutor:
         self.execute(f"BACKUP DATABASE {database} TO DISK = '{filepath}'{diff_};")
 
     def execute_update_table(self, table, data, condition=None, filters: list[tuple] = None):
-        if filters:
-            filters_parse = [f"{c} = \'{v}\'" for c, v in filters if data.__dict__[c] != v]
+        if not filters:
+            res = []
+            for c, v in data.__dict__.items():
+                if dict.__name__ == type(v).__name__:
+
+                    res.append(f"{c} = \'{json.dumps({'dict':v})}\'")
+                elif list.__name__ == type(v).__name__:
+                    res.append(f"{c} = \'{json.dumps({'list':v})}\'")
+                else:
+                    res.append(f"{c} = \'{v}\'")
+
+            filters_parse = res
         else:
-            filters_parse = [f"{c} = \'{v}\'" for c, v in data.__dict__.items()]
+            filters_parse = [f"{c} = \'{v}\'" for c, v in data.__dict__.items() if data.__dict__[c] != v]
 
         if condition:
             condition = f" WHERE {condition}"
@@ -317,7 +326,7 @@ class SQLTypes:
 
         else:
             auto_increment = ""
-        print(f"{d_type}{nullable}{auto_increment}")
+
         return f"{d_type}{nullable}{auto_increment}"
 
 
@@ -348,7 +357,7 @@ class SimpleSQL:
     def drop_database(self, name):
         dbs = self.local_databases()
         if name not in dbs and f"{name}.db" not in dbs:
-            print(dbs)
+
             raise DatabaseNotExist(f"you cant drop none exists database named \"{name}\"")
         self._executor.execute_drop_db(name)
 
@@ -378,7 +387,7 @@ class SimpleSQL:
 
     def query_all(self, table: type):
         result = self._executor.execute_select(table.__name__)
-        print(result)
+
         return [table(**item.__dict__) for item in result]
 
     def insert_to(self, table: type, data):
@@ -445,7 +454,7 @@ class SimpleSQL:
                 temp[attribute] = self._types.column(self._types.varchar(50), )
             else:
                 temp[attribute] = None
-            print(attribute, value)
+
         instance.__dict__ = temp
         return table_name, instance, primary
 
