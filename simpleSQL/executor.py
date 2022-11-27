@@ -84,14 +84,21 @@ class SQLExecutor:
                        columns: [Iterable[str], str] = "*",
                        sorted_: str = None,
                        distinct: bool = False,
-                       condition: str = ""):
+                       condition: str = "",
+                       first:bool=False):
         if columns != "*":
             columns = ", ".join(columns)[1:]
         if condition:
             condition = f"{SQLCommand.where.value} {condition}"
         if not sorted_:
+
             sorted_ = ""
-        self.execute(f"{SQLCommand.select.value} {columns} FROM {table} {sorted_} {condition};")
+        if not first:
+            first = ""
+        else:
+            first = "LIMIT 1"
+        print(f"{SQLCommand.select.value} {columns} FROM {table} {sorted_} {first} {condition};")
+        self.execute(f"{SQLCommand.select.value} {columns} FROM {table} {sorted_} {condition} {first} ;")
 
         return self._packing_query()
 
@@ -204,7 +211,6 @@ class SQLServerLess(SQLExecutor):
                     t[col] = cols[i]
 
             res.append(t)
-
         return res
 
     def execute_increment_value(self, val: int):
@@ -382,7 +388,7 @@ class SimpleSQL:
         return [table(**item.__dict__) for item in result] if not first else table(**result[0].__dict__)
 
     def query_filter_by(self, table: type, filter_: str, filter_value: Any, first=False):
-        result = self._executor.execute_select(table.__name__, condition=f"{filter_} = \"{filter_value}\"")
+        result = self._executor.execute_select(table.__name__, condition=f"{filter_} = \"{filter_value}\"",first=first)
         return [table(**item.__dict__) for item in result] if not first else table(**result[0].__dict__)
 
     def query_all(self, table: type):

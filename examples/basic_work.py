@@ -26,7 +26,7 @@ def create_table():
             db.types.column(db.types.objType()),
             db.types.column(db.types.objType())
         )
-        db.create_table(OrderModel,model,"order_id")
+        db.create_table(OrderModel,model,"order_id",auto_increment_value=1000)
         db.commit()
 
 # insert example (you use AUTO_INC if you set autoincrement on this attribute)
