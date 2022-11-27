@@ -322,7 +322,10 @@ class SimpleSQL:
         self._executor.execute_drop_db(name)
 
     def create_database(self, name):
+        if self._types._server_less:
+            raise Exception("cant create db with serverless like that")
         if name not in self.local_databases():
+
             self._executor.execute_create_db(name)
         else:
             raise DatabaseExist(f"database named \"{name}\" is already created.")
