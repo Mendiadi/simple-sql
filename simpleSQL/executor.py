@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+import os
 from ctypes import Union
 from typing import Callable, Any, Sequence
 
@@ -46,6 +48,7 @@ class SQLCommand(enum.Enum):
 
 class SQLExecutor:
     def __init__(self, *args, **kwargs):
+        self._is_conn = False
         self.db = None
         self._cursor = None
         self._buffer = None
@@ -53,10 +56,10 @@ class SQLExecutor:
     def __enter__(self):
         return SimpleSQL(self)
 
-    def _adding_quot(self, values,columns):
+    def _adding_quot(self, values, columns):
         values_ = []
         columns_ = list(columns)
-        for i,val in enumerate(values):
+        for i, val in enumerate(values):
             if val is None:
                 values_.append("null")
             elif val == "AUTO_INC_VALUE":
@@ -88,20 +91,22 @@ class SQLExecutor:
         self.db.database = name
 
     def execute_drop_db(self, name: str):
-        self.execute(f"DROP DATABASE {name};")
+        ...
 
     def execute_insert(self, table, columns: tuple, values: tuple):
-        columns, values = self._adding_quot(values,columns)
+        columns, values = self._adding_quot(values, columns)
         cols = f'({str(",").join(columns)})'
         vals = f'({str(",").join(values)})'
         print(f"{SQLCommand.insert.value} {SQLCommand.into.value} {table}"
-                     f" {cols} VALUES {vals};")
+              f" {cols} VALUES {vals};")
         self._cursor.execute(f"{SQLCommand.insert.value} {SQLCommand.into.value} {table}"
-                     f" {cols} VALUES {vals};")
+                             f" {cols} VALUES {vals};")
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self._cursor.close()
-        self.db.close()
+        if self._is_conn:
+            self._cursor.close()
+            self.db.close()
+            self._is_conn = False
 
     def start(self):
         return self.__enter__()
@@ -152,12 +157,16 @@ class SQLExecutor:
     def execute(self, statement):
         self._cursor.execute(statement)
 
+    def databases(self):
+        ...
+
 
 class SQLServerLess(SQLExecutor):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.db = sqlite3.connect(*args, **kwargs)
         self._cursor = self.db.cursor()
+        self._is_conn = True
 
     def _packing_query(self):
         names = list(map(lambda x: x[0], self._cursor.description))
@@ -165,14 +174,23 @@ class SQLServerLess(SQLExecutor):
         for cols in self._cursor.fetchall():
             t = DBTable()
             for i, col in enumerate(names):
-
                 t[col] = cols[i]
             res.append(t)
         return res
 
-
     def execute_increment_value(self, val: int):
         self.execute(f"ALTER TABLE Persons AUTOINCREMENT={val};")
+
+    def databases(self):
+        res = []
+        for f in os.listdir():
+            if f.endswith(".db"):
+                res.append((f,))
+        return res
+
+    def execute_drop_db(self, name: str):
+        self.stop()
+        os.remove(name + ".db")
 
 
 class SQLServer(SQLExecutor):
@@ -182,6 +200,10 @@ class SQLServer(SQLExecutor):
             self._auto_create_and_ignore(*args, **kwargs)
         else:
             self._create(*args, **kwargs)
+        self._is_conn = True
+
+    def execute_drop_db(self, name: str):
+        self.execute(f"DROP DATABASE {name};")
 
     def execute_increment_value(self, val: int):
         self.execute(f"ALTER TABLE Persons AUTO_INCREMENT={val};")
@@ -221,6 +243,20 @@ class SQLTypes:
     def __init__(self, serverless=False):
         self._server_less = serverless
 
+    def text(self, size: int = 0, long: bool = False):
+        if long:
+            return f"LONGTEXT"
+        return f"TEXT({size})"
+
+    def boolean(self):
+        return "BOOL"
+
+    def double(self, size: int, d: int):
+        return f"DOUBLE({size}, {d})"
+
+    def char(self, size: int):
+        return f"CHAR({size})"
+
     def integer(self):
         return f"INTEGER"
 
@@ -245,17 +281,14 @@ class SQLTypes:
 
 
 class SimpleSQL:
-
     AUTO_INC = "AUTO_INC_VALUE"
 
     def __init__(self, executor: SQLExecutor = None):
         self._executor = executor
-        if isinstance(executor,SQLServer):
+        if isinstance(executor, SQLServer):
             self._types = SQLTypes()
         else:
             self._types = SQLTypes(True)
-
-
 
     @property
     def executor(self) -> SQLExecutor:
@@ -272,7 +305,9 @@ class SimpleSQL:
         self._executor.db.autocommit = val
 
     def drop_database(self, name):
-        if name not in self.local_databases():
+        dbs = self.local_databases()
+        if name not in dbs and f"{name}.db" not in dbs:
+            print(dbs)
             raise DatabaseNotExist(f"you cant drop none exists database named \"{name}\"")
         self._executor.execute_drop_db(name)
 
@@ -287,7 +322,6 @@ class SimpleSQL:
                                             tuple([f"{obj} {type_}" for obj, type_ in data.__dict__.items()]),
                                             primary_key)
         if auto_increment_value and not self._types._server_less:
-
             self._executor.execute_increment_value(auto_increment_value)
 
     def query_filters(self, table: type, filters: str, first: bool = False):
