@@ -420,10 +420,14 @@ class SimpleSQL:
 
     def query_filters(self, table: type, filters: str, first: bool = False):
         result = self._executor.execute_select(table.__name__, condition=filters)
+        if not result:
+            return None
         return [table(**item.__dict__) for item in result] if not first else table(**result[0].__dict__)
 
     def query_filter_by(self, table: type, filter_: str, filter_value: Any, first=False):
         result = self._executor.execute_select(table.__name__, condition=f"{filter_} = \"{filter_value}\"", first=first)
+        if not result:
+            return None
         return [table(**item.__dict__) for item in result] if not first else table(**result[0].__dict__)
 
     def query_all(self, table: type):
