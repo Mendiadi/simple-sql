@@ -28,7 +28,7 @@ def create_table():
         )
         db.create_table(OrderModel,model,"order_id",auto_increment_value=1000)
         db.commit()
-
+0
 # insert example (you use AUTO_INC if you set autoincrement on this attribute)
 def insert(name,products,details):
     with simpleSQL.connect(serverless=True,database="orders.db") as db:

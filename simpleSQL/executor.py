@@ -1,12 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from ctypes import Union
 from typing import Any, Sequence, Iterable
 
-import mysql.connector
-import sqlite3
 import enum
 
 
@@ -54,17 +53,19 @@ class SQLExecutor:
         self._cursor = None
         self._buffer = None
 
+
     def __enter__(self):
         return SimpleSQL(self)
+
 
     @staticmethod
     def _adding_quot(values, columns):
         values_ = []
         columns_ = list(columns)
         for i, val in enumerate(values):
-            if list.__name__ == type(val).__name__:
+            if list == type(val):
                 val = json.dumps({"list": val})
-            if dict.__name__ == type(val).__name__:
+            if dict == type(val):
                 val = json.dumps({"dict": val})
             if val is None:
                 values_.append("null")
@@ -85,13 +86,12 @@ class SQLExecutor:
                        sorted_: str = None,
                        distinct: bool = False,
                        condition: str = "",
-                       first:bool=False):
+                       first: bool = False):
         if columns != "*":
             columns = ", ".join(columns)[1:]
         if condition:
             condition = f"{SQLCommand.where.value} {condition}"
         if not sorted_:
-
             sorted_ = ""
         if not first:
             first = ""
@@ -117,6 +117,8 @@ class SQLExecutor:
         self._cursor.execute(f"{SQLCommand.insert.value} {SQLCommand.into.value} {table}"
                              f" {cols} VALUES {vals};")
 
+
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self._is_conn:
             self._cursor.close()
@@ -126,13 +128,19 @@ class SQLExecutor:
     def start(self):
         return self.__enter__()
 
-    def execute_create_table(self, name: str, columns: tuple, primary):
+    def execute_create_table(self, name: str, columns: tuple, primary,foreign_key:str = "",reference:tuple=None):
         if not primary:
             primary = ""
         else:
             primary = f", PRIMARY KEY ({primary}) "
-
-        self.execute(f"CREATE TABLE IF NOT EXISTS {name} ({str(',').join(columns)}{primary});")
+        if foreign_key:
+            foreign_key = f", FOREIGN KEY ({foreign_key})"
+        if reference:
+            reference = f" REFERENCES {reference[0]}({reference[1]}) ON DELETE CASCADE"
+        else:
+            reference=""
+        print(f"CREATE TABLE IF NOT EXISTS {name} ({str(',').join(columns)}{primary}{foreign_key}{reference});")
+        self.execute(f"CREATE TABLE IF NOT EXISTS {name} ({str(',').join(columns)}{primary}{foreign_key}{reference});")
 
     def stop(self):
         self.__exit__(None, None, None)
@@ -141,12 +149,13 @@ class SQLExecutor:
         self.execute(f"DELETE FROM {table} WHERE {column} = \"{value}\";")
 
     def execute_delete_if_equal(self, table, statement):
+
         self.execute(f"DELETE FROM {table} WHERE {statement};")
 
     def execute_drop_table(self, table: str):
         self.execute(f"DROP TABLE IF EXISTS {table}")
 
-    def execute_increment_value(self, val: int):
+    def execute_increment_value(self,name:str, val: int):
         ...
 
     def execute_backup(self, database: str, filepath: str, diff: bool = False):
@@ -156,15 +165,17 @@ class SQLExecutor:
             diff_ = ""
         self.execute(f"BACKUP DATABASE {database} TO DISK = '{filepath}'{diff_};")
 
+
     def execute_update_table(self, table, data, condition=None, filters: list[tuple] = None):
+        self.execute("PRAGMA foreign_keys = ON;")
         if not filters:
             res = []
             for c, v in data.__dict__.items():
-                if dict.__name__ == type(v).__name__:
+                if dict == type(v):
 
-                    res.append(f"{c} = \'{json.dumps({'dict':v})}\'")
-                elif list.__name__ == type(v).__name__:
-                    res.append(f"{c} = \'{json.dumps({'list':v})}\'")
+                    res.append(f"{c} = \'{json.dumps({'dict': v})}\'")
+                elif list == type(v):
+                    res.append(f"{c} = \'{json.dumps({'list': v})}\'")
                 else:
                     res.append(f"{c} = \'{v}\'")
 
@@ -188,10 +199,30 @@ class SQLExecutor:
 
 class SQLServerLess(SQLExecutor):
     def __init__(self, *args, **kwargs):
+
+        import sqlite3
         super().__init__(*args, **kwargs)
         self.db = sqlite3.connect(*args, **kwargs)
         self._cursor = self.db.cursor()
         self._is_conn = True
+
+    def execute_insert(self, table, columns: tuple, values: tuple):
+        self.execute("PRAGMA foreign_keys = ON;")
+        super(SQLServerLess, self).execute_insert(table,columns,values)
+
+    def execute_delete_by(self, table, column, value):
+        self.execute("PRAGMA foreign_keys = ON;")
+        super(SQLServerLess, self).execute_delete_by(table,column,value)
+
+    def execute_delete_if_equal(self, table, statement):
+        self.execute("PRAGMA foreign_keys = ON;")
+        super(SQLServerLess, self).execute_delete_if_equal(table,statement)
+
+    def execute_create_table(self, name: str, columns: tuple, primary,foreign_key:str = "",reference:tuple=None):
+        if foreign_key:
+            self.execute("PRAGMA foreign_keys = ON;")
+
+        super(SQLServerLess, self).execute_create_table(name,columns,primary,foreign_key,reference)
 
     def _packing_query(self):
         names = list(map(lambda x: x[0], self._cursor.description))
@@ -200,7 +231,7 @@ class SQLServerLess(SQLExecutor):
             t = DBTable()
 
             for i, col in enumerate(names):
-                if type(cols[i]).__name__ == str.__name__:
+                if type(cols[i]) == str:
                     if '{"list": ' in cols[i]:
                         t[col] = json.loads(cols[i])['list']
                     elif '{"dict": ' in cols[i]:
@@ -213,8 +244,8 @@ class SQLServerLess(SQLExecutor):
             res.append(t)
         return res
 
-    def execute_increment_value(self, val: int):
-        self.execute(f"ALTER TABLE Persons AUTOINCREMENT={val};")
+    def execute_increment_value(self,name:str, val: int):
+        self.execute(f"ALTER TABLE {name} AUTOINCREMENT={val};")
 
     def databases(self):
         res = []
@@ -240,8 +271,8 @@ class SQLServer(SQLExecutor):
     def execute_drop_db(self, name: str):
         self.execute(f"DROP DATABASE {name};")
 
-    def execute_increment_value(self, val: int):
-        self.execute(f"ALTER TABLE Persons AUTO_INCREMENT={val};")
+    def execute_increment_value(self,name:str, val: int):
+        self.execute(f"ALTER TABLE {name} AUTO_INCREMENT={val};")
 
     def _auto_create_and_ignore(self, *args, **kwargs):
         name = kwargs.get("database", None)
@@ -255,17 +286,19 @@ class SQLServer(SQLExecutor):
             self.db.database = name
 
     def _create(self, *args, **kwargs):
+        import mysql.connector
         kwargs.pop("create_and_ignore", None)
         self.db = mysql.connector.connect(*args, **kwargs)
         self._cursor = self.db.cursor()
 
     def _packing_query(self):
         res = []
-        for cols in self._cursor:
+
+        for cols in self._cursor.fetchall():
             t = DBTable()
             for i, col in enumerate(self._cursor.column_names):
 
-                if type(cols[i]).__name__ == str.__name__:
+                if type(cols[i]) == str:
                     if '{"list": ' in cols[i]:
                         t[col] = json.loads(cols[i])['list']
                     elif '{"dict": ' in cols[i]:
@@ -363,7 +396,6 @@ class SimpleSQL:
     def drop_database(self, name):
         dbs = self.local_databases()
         if name not in dbs and f"{name}.db" not in dbs:
-
             raise DatabaseNotExist(f"you cant drop none exists database named \"{name}\"")
         self._executor.execute_drop_db(name)
 
@@ -376,19 +408,22 @@ class SimpleSQL:
         else:
             raise DatabaseExist(f"database named \"{name}\" is already created.")
 
-    def create_table(self, table: type, data, primary_key: str = None, auto_increment_value: int = None):
+    def create_table(self, table: type, data, primary_key: str = None,
+                     auto_increment_value: int = None,
+                     foreign_key:str="",
+                     reference:tuple=None):
         self._executor.execute_create_table(table.__name__ if not isinstance(table, str) else table,
                                             tuple([f"{obj} {type_}" for obj, type_ in data.__dict__.items()]),
-                                            primary_key)
+                                            primary_key,foreign_key=foreign_key,reference=reference)
         if auto_increment_value and not self._types._server_less:
-            self._executor.execute_increment_value(auto_increment_value)
+            self._executor.execute_increment_value(table.__name__,auto_increment_value)
 
     def query_filters(self, table: type, filters: str, first: bool = False):
         result = self._executor.execute_select(table.__name__, condition=filters)
         return [table(**item.__dict__) for item in result] if not first else table(**result[0].__dict__)
 
     def query_filter_by(self, table: type, filter_: str, filter_value: Any, first=False):
-        result = self._executor.execute_select(table.__name__, condition=f"{filter_} = \"{filter_value}\"",first=first)
+        result = self._executor.execute_select(table.__name__, condition=f"{filter_} = \"{filter_value}\"", first=first)
         return [table(**item.__dict__) for item in result] if not first else table(**result[0].__dict__)
 
     def query_all(self, table: type):
@@ -454,7 +489,7 @@ class SimpleSQL:
 
                 temp[attribute] = self._types.column(self._types.integer(), )
 
-            elif isinstance(value,(list,tuple,dict)):
+            elif isinstance(value, (list, tuple, dict)):
                 temp[attribute] = self._types.column(self._types.objType(), )
             elif isinstance(value, str):
                 temp[attribute] = self._types.column(self._types.varchar(50), )
@@ -463,6 +498,7 @@ class SimpleSQL:
 
         instance.__dict__ = temp
         return table_name, instance, primary
+
 
 
 def connect(serverless=False, create_and_ignore=False, *args, **kwargs) -> SQLExecutor:
