@@ -53,10 +53,8 @@ class SQLExecutor:
         self._cursor = None
         self._buffer = None
 
-
     def __enter__(self):
         return SimpleSQL(self)
-
 
     @staticmethod
     def _adding_quot(values, columns):
@@ -117,8 +115,6 @@ class SQLExecutor:
         self._cursor.execute(f"{SQLCommand.insert.value} {SQLCommand.into.value} {table}"
                              f" {cols} VALUES {vals};")
 
-
-
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self._is_conn:
             self._cursor.close()
@@ -128,17 +124,23 @@ class SQLExecutor:
     def start(self):
         return self.__enter__()
 
-    def execute_create_table(self, name: str, columns: tuple, primary,foreign_key:str = "",reference:tuple=None):
+    def execute_create_table(self, name: str, columns: tuple, primary, foreign_key: str = "", reference: tuple = None,
+                             ondelete="", onupdate=""):
         if not primary:
             primary = ""
         else:
             primary = f", PRIMARY KEY ({primary}) "
         if foreign_key:
             foreign_key = f", FOREIGN KEY ({foreign_key})"
+        if ondelete:
+            ondelete = " ON DELETE CASCADE"
+        if onupdate:
+            onupdate = " ON UPDATE CASCADE"
         if reference:
-            reference = f" REFERENCES {reference[0]}({reference[1]}) ON DELETE CASCADE"
+            reference = f" REFERENCES {reference[0]}({reference[1]}){ondelete}{onupdate}"
         else:
-            reference=""
+            reference = ""
+
         print(f"CREATE TABLE IF NOT EXISTS {name} ({str(',').join(columns)}{primary}{foreign_key}{reference});")
         self.execute(f"CREATE TABLE IF NOT EXISTS {name} ({str(',').join(columns)}{primary}{foreign_key}{reference});")
 
@@ -155,7 +157,7 @@ class SQLExecutor:
     def execute_drop_table(self, table: str):
         self.execute(f"DROP TABLE IF EXISTS {table}")
 
-    def execute_increment_value(self,name:str, val: int):
+    def execute_increment_value(self, name: str, val: int):
         ...
 
     def execute_backup(self, database: str, filepath: str, diff: bool = False):
@@ -165,9 +167,10 @@ class SQLExecutor:
             diff_ = ""
         self.execute(f"BACKUP DATABASE {database} TO DISK = '{filepath}'{diff_};")
 
-
-    def execute_update_table(self, table, data, condition=None, filters: list[tuple] = None):
-        self.execute("PRAGMA foreign_keys = ON;")
+    def execute_update_table(self, table, data, condition=None,
+                             filters: list[tuple] = None, foreign_key=False):
+        if foreign_key:
+            self.execute("PRAGMA foreign_keys = ON;")
         if not filters:
             res = []
             for c, v in data.__dict__.items():
@@ -208,21 +211,21 @@ class SQLServerLess(SQLExecutor):
 
     def execute_insert(self, table, columns: tuple, values: tuple):
         self.execute("PRAGMA foreign_keys = ON;")
-        super(SQLServerLess, self).execute_insert(table,columns,values)
+        super(SQLServerLess, self).execute_insert(table, columns, values)
 
     def execute_delete_by(self, table, column, value):
         self.execute("PRAGMA foreign_keys = ON;")
-        super(SQLServerLess, self).execute_delete_by(table,column,value)
+        super(SQLServerLess, self).execute_delete_by(table, column, value)
 
     def execute_delete_if_equal(self, table, statement):
         self.execute("PRAGMA foreign_keys = ON;")
-        super(SQLServerLess, self).execute_delete_if_equal(table,statement)
+        super(SQLServerLess, self).execute_delete_if_equal(table, statement)
 
-    def execute_create_table(self, name: str, columns: tuple, primary,foreign_key:str = "",reference:tuple=None):
+    def execute_create_table(self, name: str, columns: tuple, primary, foreign_key: str = "", reference: tuple = None):
         if foreign_key:
             self.execute("PRAGMA foreign_keys = ON;")
 
-        super(SQLServerLess, self).execute_create_table(name,columns,primary,foreign_key,reference)
+        super(SQLServerLess, self).execute_create_table(name, columns, primary, foreign_key, reference)
 
     def _packing_query(self):
         names = list(map(lambda x: x[0], self._cursor.description))
@@ -244,7 +247,7 @@ class SQLServerLess(SQLExecutor):
             res.append(t)
         return res
 
-    def execute_increment_value(self,name:str, val: int):
+    def execute_increment_value(self, name: str, val: int):
         self.execute(f"ALTER TABLE {name} AUTOINCREMENT={val};")
 
     def databases(self):
@@ -271,7 +274,7 @@ class SQLServer(SQLExecutor):
     def execute_drop_db(self, name: str):
         self.execute(f"DROP DATABASE {name};")
 
-    def execute_increment_value(self,name:str, val: int):
+    def execute_increment_value(self, name: str, val: int):
         self.execute(f"ALTER TABLE {name} AUTO_INCREMENT={val};")
 
     def _auto_create_and_ignore(self, *args, **kwargs):
@@ -410,13 +413,15 @@ class SimpleSQL:
 
     def create_table(self, table: type, data, primary_key: str = None,
                      auto_increment_value: int = None,
-                     foreign_key:str="",
-                     reference:tuple=None):
+                     foreign_key: str = "",
+                     reference: tuple = None,
+                     ondelete="",onupdate=""):
         self._executor.execute_create_table(table.__name__ if not isinstance(table, str) else table,
                                             tuple([f"{obj} {type_}" for obj, type_ in data.__dict__.items()]),
-                                            primary_key,foreign_key=foreign_key,reference=reference)
+                                            primary_key, foreign_key=foreign_key, reference=reference,
+                                            ondelete=ondelete,onupdate=onupdate)
         if auto_increment_value and not self._types._server_less:
-            self._executor.execute_increment_value(table.__name__,auto_increment_value)
+            self._executor.execute_increment_value(table.__name__, auto_increment_value)
 
     def query_filters(self, table: type, filters: str, first: bool = False):
         result = self._executor.execute_select(table.__name__, condition=filters)
@@ -453,8 +458,8 @@ class SimpleSQL:
     def local_databases(self) -> list:
         return [db[0] for db in self._executor.databases()]
 
-    def query_update_table(self, table, data):
-        self._executor.execute_update_table(table.__name__, data)
+    def query_update_table(self, table, data,foreign_key = False):
+        self._executor.execute_update_table(table.__name__, data,foreign_key)
 
     def query_alter_table(self):
         ...
@@ -504,7 +509,6 @@ class SimpleSQL:
         return table_name, instance, primary
 
 
-
 def connect(serverless=False, create_and_ignore=False, *args, **kwargs) -> SQLExecutor:
     if serverless:
         return SQLServerLess(*args, **kwargs)
@@ -512,3 +516,5 @@ def connect(serverless=False, create_and_ignore=False, *args, **kwargs) -> SQLEx
         kwargs["create_and_ignore"] = create_and_ignore
         return SQLServer(*args, **kwargs)
     return SQLServer(*args, **kwargs)
+
+
