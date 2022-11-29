@@ -461,8 +461,10 @@ class SimpleSQL:
     def query_update_table(self, table, data,foreign_key = False):
         self._executor.execute_update_table(table.__name__, data,foreign_key)
 
-    def query_alter_table(self):
-        ...
+    def query_alter_table_forgkey(self,table,foreign_key,reference:tuple):
+        self._executor.execute\
+            (f"ALTER TABLE {table} ADD FOREIGN KEY ({foreign_key}) REFERENCES {reference[0]}({reference[1]});")
+
 
     def backup(self, filepath: str, diff: bool = False):
         if self._executor.db.database:
