@@ -360,9 +360,12 @@ class SQLTypes:
     def image(max:int=100):
         return f"VARBINARY({max})"
 
+   
     @staticmethod
-    def date():
-        return "timestamp DEFAULT CURRENT_TIMESTAMP"
+    def date(default=True,on_update=False):
+        defa = " ON UPDATE CURRENT_TIMESTAMP" if default else ""
+        on_up= " DEFAULT CURRENT_TIMESTAMP" if on_update else ""
+        return f"TIMESTEMP{defa}{on_up}"
 
     @staticmethod
     def varchar(size: int, ):
