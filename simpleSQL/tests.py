@@ -31,7 +31,7 @@ class TestSimpleSQL(unittest.TestCase):
                 , db.types.column(db.types.varchar(50))
             )
             obj = SampleTable(db.AUTO_INC, "tal")
-            db.create_table(SampleTable, data, primary_key="id")
+            db.create_table(SampleTable, data, primary_key="id",auto_increment_value=100,ondelete="")
             db.insert_to(SampleTable, obj)
             obj1 = db.query_filter_by(SampleTable, "id", 1, first=True)
             assert 1 == obj1.id and obj.name == obj1.name
