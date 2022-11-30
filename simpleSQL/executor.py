@@ -172,13 +172,15 @@ class SQLExecutor:
             diff_ = ""
         self.execute(f"BACKUP DATABASE {database} TO DISK = '{filepath}'{diff_};")
 
-    def execute_update_table(self, table, data, condition=None,
+    def execute_update_table(self, table, data,prime_indexes:str=None, condition=None,
                              filters: list[tuple] = None, foreign_key=False):
         if foreign_key:
             self.execute("PRAGMA foreign_keys = ON;")
         if not filters:
             res = []
             for c, v in data.__dict__.items():
+                if c == prime_indexes:
+                    continue
                 if dict == type(v):
 
                     res.append(f"{c} = \'{json.dumps({'dict': v})}\'")
@@ -189,12 +191,16 @@ class SQLExecutor:
 
             filters_parse = res
         else:
+
             filters_parse = [f"{c} = \'{v}\'" for c, v in data.__dict__.items() if data.__dict__[c] != v]
+
 
         if condition:
             condition = f" WHERE {condition}"
         else:
+
             condition = f" WHERE {filters_parse.pop(0)}"
+
 
         self.execute(f"UPDATE {table} SET {','.join(filters_parse)}{condition};")
 
@@ -360,12 +366,6 @@ class SQLTypes:
     def image(max:int=100):
         return f"VARBINARY({max})"
 
-   
-    @staticmethod
-    def date(default=True,on_update=False):
-        defa = " ON UPDATE CURRENT_TIMESTAMP" if default else ""
-        on_up= " DEFAULT CURRENT_TIMESTAMP" if on_update else ""
-        return f"TIMESTEMP{defa}{on_up}"
 
     @staticmethod
     def varchar(size: int, ):
@@ -411,6 +411,13 @@ class SimpleSQL:
 
     def set_auto_commit(self, val: bool):
         self._executor.db.autocommit = val
+
+    def update_column_to_date(self,table,column,default = False,on_update=False):
+        self._executor.execute(f"""ALTER TABLE {table}
+    CHANGE {column}
+        {column} TIMESTAMP NOT NULL
+            {"DEFAULT CURRENT_TIMESTAMP" if default else ""}
+            {"ON UPDATE CURRENT_TIMESTAMP" if column else ""};""")
 
     def drop_database(self, name):
         dbs = self.local_databases()
@@ -482,8 +489,10 @@ class SimpleSQL:
     def local_databases(self) -> list:
         return [db[0] for db in self._executor.databases()]
 
-    def query_update_table(self, table, data,foreign_key = False):
-        self._executor.execute_update_table(table.__name__, data,foreign_key)
+    def query_update_table(self, table, data,prime_indexes=0,foreign_key = False):
+        self._executor.execute_update_table(table.__name__, data,prime_indexes=prime_indexes,condition=None,
+                                            filters=None,
+                                            foreign_key=foreign_key)
 
     def query_alter_table_forgkey(self, table, foreign_key, reference: tuple, ondelete="", onupdate=""):
         if ondelete:
