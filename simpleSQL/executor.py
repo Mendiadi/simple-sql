@@ -371,7 +371,7 @@ class SQLTypes:
     def varchar(size: int, ):
         return f"VARCHAR({size})"
 
-    def column(self, d_type, nullable: bool = True, auto_increment: bool = False):
+    def column(self, d_type, nullable: bool = True, auto_increment: bool = False,unique=False):
         if nullable:
             nullable = ""
         else:
@@ -384,8 +384,11 @@ class SQLTypes:
 
         else:
             auto_increment = ""
-
-        return f"{d_type}{nullable}{auto_increment}"
+        if unique:
+            unique = " UNIQUE"
+        else:
+            unique = ""
+        return f"{d_type}{nullable}{auto_increment}{unique}"
 
 
 class SimpleSQL:
