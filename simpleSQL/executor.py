@@ -1,6 +1,3 @@
-
-
-
 from __future__ import annotations
 
 import asyncio
@@ -77,7 +74,7 @@ class SQLExecutor:
             else:
                 values_.append("\'" + str(val) + "\'")
             new_cols.append(columns[i])
-            print(new_cols,values_)
+
         return new_cols, values_
 
     def _packing_query(self) -> Sequence:
@@ -99,7 +96,7 @@ class SQLExecutor:
             first = ""
         else:
             first = "LIMIT 1"
-        print(f"{SQLCommand.select.value} {columns} FROM {table} {sorted_} {first} {condition};")
+
         self.execute(f"{SQLCommand.select.value} {columns} FROM {table} {sorted_} {condition} {first} ;")
 
         return self._packing_query()
@@ -128,25 +125,16 @@ class SQLExecutor:
     def start(self):
         return self.__enter__()
 
-    def execute_create_table(self, name: str, columns: tuple, primary, foreign_key: str = "", reference: tuple = None,
-                             ondelete="", onupdate=""):
+    def execute_create_table(self, name: str, columns: tuple, primary, foreign_key,
+                             reference: tuple = (),
+                             on_delete: bool=False, on_update:bool=False):
 
-        if not primary:
-            primary = ""
-        else:
-            primary = f", PRIMARY KEY ({primary}) "
-        if foreign_key:
-            foreign_key = f", FOREIGN KEY ({foreign_key})"
-        if ondelete:
-            ondelete = " ON DELETE CASCADE"
-        if onupdate:
-            onupdate = " ON UPDATE CASCADE"
-        if reference:
-            reference = f" REFERENCES {reference[0]}({reference[1]}){ondelete}{onupdate}"
-        else:
-            reference = ""
+        primary = f", PRIMARY KEY ({primary}) " if primary else ""
+        foreign_key = f", FOREIGN KEY ({foreign_key})"   if foreign_key else ""
+        ondelete = " ON DELETE CASCADE" if on_delete else ""
+        onupdate = " ON UPDATE CASCADE"   if on_update else ""
+        reference = f" REFERENCES {reference[0]}({reference[1]}){ondelete}{onupdate}"   if reference else ""
 
-        print(f"CREATE TABLE IF NOT EXISTS {name} ({str(',').join(columns)}{primary}{foreign_key}{reference});")
         self.execute(f"CREATE TABLE IF NOT EXISTS {name} ({str(',').join(columns)}{primary}{foreign_key}{reference});")
 
     def stop(self):
@@ -232,11 +220,14 @@ class SQLServerLess(SQLExecutor):
         self.execute("PRAGMA foreign_keys = ON;")
         super(SQLServerLess, self).execute_delete_if_equal(table, statement)
 
-    def execute_create_table(self, name: str, columns: tuple, primary, foreign_key: str = "", reference: tuple = None):
+    def execute_create_table(self, name: str, columns: tuple, primary, foreign_key: str = "",
+                             reference: tuple = None,on_delete=False,on_update=False):
         if foreign_key:
             self.execute("PRAGMA foreign_keys = ON;")
 
-        super(SQLServerLess, self).execute_create_table(name, columns, primary, foreign_key, reference)
+        super(SQLServerLess, self).execute_create_table(name, columns, primary,
+                                                        foreign_key, reference,
+                                                        on_delete,on_update)
 
     def _packing_query(self):
         names = list(map(lambda x: x[0], self._cursor.description))
@@ -439,21 +430,17 @@ class SimpleSQL:
 
     def create_table(self, table: type, data, primary_key: str = None,
                      auto_increment_value: int = None,
-                     foreign_key: str = "",
+                     foreign_key: str = None,
                      reference: tuple = None,
-                     ondelete="",onupdate=""):
-        print(onupdate,ondelete,1)
-        if ondelete or onupdate:
+                     ondelete=None,onupdate=None):
 
-            self._executor.execute_create_table(table.__name__ if not isinstance(table, str) else table,
+        self._executor.execute_create_table(table.__name__,
                                                 tuple([f"{obj} {type_}" for obj, type_ in data.__dict__.items()]),
-                                                primary_key, foreign_key, reference,
-                                                ondelete,onupdate)
-        else:
-            self._executor.execute_create_table(table.__name__ if not isinstance(table, str) else table,
-                                                tuple([f"{obj} {type_}" for obj, type_ in data.__dict__.items()]),
-                                                primary_key, foreign_key, reference,
-                                               )
+                                                primary_key,foreign_key,
+                                                reference=reference,on_delete=ondelete,on_update=onupdate
+                                              )
+
+
         if auto_increment_value and not self._types._server_less:
             self._executor.execute_increment_value(table.__name__, auto_increment_value)
 
@@ -502,8 +489,6 @@ class SimpleSQL:
             ondelete = " ON DELETE CASCADE"
         if onupdate:
             onupdate = " ON UPDATE CASCADE"
-        print(f"ALTER TABLE {table} ADD FOREIGN KEY ({foreign_key}) REFERENCES "
-              f"{reference[0]}({reference[1]}{ondelete}{onupdate});")
         self._executor.execute \
             (f"ALTER TABLE {table} ADD FOREIGN KEY ({foreign_key}) REFERENCES "
              f"{reference[0]}({reference[1]}){ondelete}{onupdate};")
@@ -560,3 +545,8 @@ def connect(serverless=False, create_and_ignore=False, *args, **kwargs) -> SQLEx
         kwargs["create_and_ignore"] = create_and_ignore
         return SQLServer(*args, **kwargs)
     return SQLServer(*args, **kwargs)
+
+#todo fix CHANGE command in serverless
+
+
+
